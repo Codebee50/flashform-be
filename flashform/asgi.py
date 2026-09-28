@@ -18,14 +18,17 @@ from channels.routing import ProtocolTypeRouter, URLRouter  # noqa: E402
 from channels.security.websocket import OriginValidator  # noqa: E402
 from django.conf import settings  # noqa: E402
 
+from activities.ws_auth import JWTAuthMiddleware  # noqa: E402
+
 from .routing import websocket_urlpatterns  # noqa: E402
 
 application = ProtocolTypeRouter(
     {
         "http": django_asgi_app,
-        # Only accept sockets opened from the frontend origin(s).
+        # Only accept sockets opened from the frontend origin(s). The JWT middleware sets
+        # scope["user"] from ?auth= (teacher sockets); students use ?token= instead.
         "websocket": OriginValidator(
-            URLRouter(websocket_urlpatterns),
+            JWTAuthMiddleware(URLRouter(websocket_urlpatterns)),
             settings.CORS_ALLOWED_ORIGINS,
         ),
     }

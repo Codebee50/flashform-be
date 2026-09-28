@@ -137,6 +137,10 @@ else:
     CHANNEL_LAYERS = {"default": {"BACKEND": "channels.layers.InMemoryChannelLayer"}}
     CACHES = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}}
 
+# Throttle keys for WebSocket broadcasts (activities/broadcast.py) need millisecond
+# expiry (SET NX PX), which Django's cache can't do. Empty = in-process store.
+BROADCAST_REDIS_URL = REDIS_URL
+
 
 # --- Celery -----------------------------------------------------------------
 # The broker gets its own Redis database so it never shares keys with the cache
@@ -193,6 +197,11 @@ REST_FRAMEWORK = {
         "auth_email_address": "3/hour",
         # verify-email / password-reset/confirm (signed tokens; this only caps abuse).
         "auth_token": "30/min",
+        # Student joins (PRD §8): per client IP and per room code. A class behind one
+        # school NAT shares an IP, and students re-join for every new activity, so these
+        # may need raising for real classrooms.
+        "join_ip": os.environ.get("JOIN_RATE_PER_IP", "").strip() or "10/min",
+        "join_room": os.environ.get("JOIN_RATE_PER_ROOM", "").strip() or "60/min",
     },
     # Reverse proxies in front of the app. 0 = ignore X-Forwarded-For (it is spoofable);
     # set to 1 behind a single trusted proxy (e.g. Render/Fly) so throttles see client IPs.
@@ -225,6 +234,13 @@ SPECTACULAR_SETTINGS = {
         }
     },
     "SWAGGER_UI_SETTINGS": {"persistAuthorization": True},
+    # Name shared enums explicitly; the defaults (TypeEnum, ModeEnum) would collide.
+    "ENUM_NAME_OVERRIDES": {
+        "ActivityTypeEnum": "activities.models.ActivityType",
+        "ActivityModeEnum": "activities.models.ActivityMode",
+        "ActivityStatusEnum": "activities.models.ActivityStatus",
+        "QuestionTypeEnum": "activities.models.QuestionType",
+    },
 }
 
 

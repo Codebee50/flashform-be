@@ -11,6 +11,9 @@ from rest_framework.test import APIClient
 def _isolate_tests(settings):
     # Throttle counters live in the cache; don't let them leak between tests.
     cache.clear()
+    from activities.broadcast import get_store
+
+    get_store().clear()
     # Real password hashing is deliberately slow; tests don't need that.
     settings.PASSWORD_HASHERS = ["django.contrib.auth.hashers.MD5PasswordHasher"]
     yield

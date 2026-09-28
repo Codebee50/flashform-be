@@ -48,6 +48,28 @@ flush the dev server's Redis. Use pytest-django (`db` fixture / `@pytest.mark.dj
 and the `api_client` fixture in `tests/conftest.py`. Async/Channels tests use
 pytest-asyncio (`@pytest.mark.asyncio`) and `channels.testing.WebsocketCommunicator`.
 
+## Load test
+
+`scripts/load_test.py` (PRD §15) simulates a class against the running server: 50 students
+join within 3 s, open WebSockets and answer a Quick MC question within 5 s. It then kills all
+their sockets at once, reconnects them, and checks that each one still gets events. It prints
+PASS/FAIL and exits 0 on PASS, 1 on FAIL and 2 if setup failed.
+
+```bash
+docker compose exec backend python scripts/load_test.py --base-url http://localhost:8000
+docker compose exec backend python scripts/load_test.py --help   # --students, windows, --p95-ms...
+```
+
+- Without `--teacher-email/--teacher-password`, it creates or reuses the verified teacher
+  `load-test@flashform.test` directly in the DB, with a new random password each run and no
+  email sent. On PASS the test room is deleted; on FAIL it is kept for inspection.
+- Against a loopback server, each student sends from its own `127.1.x.x` address so the
+  per-IP join limit (`JOIN_RATE_PER_IP`, 10/min) is not hit. The per-room limit
+  (`JOIN_RATE_PER_ROOM`, 60/min) still applies, so keep `--students` at or below it.
+- The WebSocket `Origin` defaults to the first `CORS_ALLOWED_ORIGINS` entry.
+- `--join-window 0 --submit-window 0` (everyone at the same instant) goes beyond the PRD
+  scenario and fails the p95 check: submits serialize on the activity row lock.
+
 ## Schema export
 
 From the repo root (the container only sees `flashform-be/`, so the schema is written to

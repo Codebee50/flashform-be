@@ -12,6 +12,8 @@ psycopg[binary]>=3.2,<4.0
 channels>=4.2,<5.0
 channels-redis>=4.2,<5.0
 daphne>=4.1,<5.0
+# Broadcast throttle keys (SET NX PX); also pulled in by channels-redis and celery[redis].
+redis>=5.0,<7.0
 
 # Background tasks
 celery[redis]>=5.5,<6.0

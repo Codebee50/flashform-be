@@ -10,6 +10,7 @@ CELERY_TASK_EAGER_PROPAGATES = True
 # which would wipe the running dev server's data. Keep tests in-process.
 CHANNEL_LAYERS = {"default": {"BACKEND": "channels.layers.InMemoryChannelLayer"}}
 CACHES = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}}
+BROADCAST_REDIS_URL = ""  # in-process broadcast throttle store
 
 # Never reach Brevo from tests, even if a developer's .env has a real key. Tests that
 # exercise the Brevo path set a fake key and mock requests.post.
