@@ -1,0 +1,14 @@
+{% extends "emails/base.html" %}
+
+{% block heading %}Verify your email{% endblock %}
+
+{% block intro %}
+Hi {{ name }},<br><br>
+Thanks for signing up for {{ app_name }}. Confirm your email address to finish setting up your account.
+{% endblock %}
+
+{% block action_label %}Verify email{% endblock %}
+
+{% block outro %}
+This link expires in 3 days. If you didn't create a {{ app_name }} account, you can ignore this email.
+{% endblock %}

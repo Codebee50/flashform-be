@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en" xmlns="http://www.w3.org/1999/xhtml">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="x-apple-disable-message-reformatting">
+<title>{{ app_name }}</title>
+</head>
+{% comment %}
+Email-safe layout: tables and inline styles only (Gmail drops <style> blocks, Outlook
+ignores max-width and most CSS on <a>). Child templates fill heading, intro,
+action_label and outro, and pass `action_url` in the context.
+{% endcomment %}
+<body style="margin:0; padding:0; background-color:#FAFAF9;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#FAFAF9;">
+  <tr>
+    <td align="center" style="padding:32px 16px;">
+      <!--[if mso]><table role="presentation" width="560" cellpadding="0" cellspacing="0" border="0"><tr><td><![endif]-->
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:560px; background-color:#FFFFFF; border:1px solid #E7E5E4; border-radius:8px;">
+        <tr>
+          <td style="padding:28px 32px 0 32px; font-family:-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size:18px; line-height:24px; font-weight:bold; color:#C2410C;">
+            {{ app_name }}
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:24px 32px 0 32px; font-family:-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size:22px; line-height:30px; font-weight:bold; color:#1C1917;">
+            {% block heading %}{% endblock %}
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:12px 32px 0 32px; font-family:-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size:16px; line-height:24px; color:#1C1917;">
+            {% block intro %}{% endblock %}
+          </td>
+        </tr>
+        {% if action_url %}
+        <tr>
+          <td style="padding:28px 32px 28px 32px;">
+            <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+              <tr>
+                <td align="center" bgcolor="#C2410C" style="border-radius:6px; padding:14px 28px;">
+                  <a href="{{ action_url }}" target="_blank" style="font-family:-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size:16px; line-height:20px; font-weight:bold; color:#FFFFFF; text-decoration:none; display:inline-block;">{% block action_label %}{% endblock %}</a>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:0 32px 0 32px; font-family:-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size:14px; line-height:20px; color:#57534E;">
+            If the button doesn't work, copy and paste this link into your browser:<br>
+            <a href="{{ action_url }}" target="_blank" style="color:#C2410C; word-break:break-all;">{{ action_url }}</a>
+          </td>
+        </tr>
+        {% endif %}
+        <tr>
+          <td style="padding:24px 32px 32px 32px; font-family:-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size:14px; line-height:20px; color:#57534E;">
+            {% block outro %}{% endblock %}
+          </td>
+        </tr>
+      </table>
+      <!--[if mso]></td></tr></table><![endif]-->
+      {% if support_email %}
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;">
+        <tr>
+          <td align="center" style="padding:16px 32px 0 32px; font-family:-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size:12px; line-height:18px; color:#78716C;">
+            Questions? Contact us at <a href="mailto:{{ support_email }}" style="color:#78716C;">{{ support_email }}</a>.
+          </td>
+        </tr>
+      </table>
+      {% endif %}
+    </td>
+  </tr>
+</table>
+</body>
+</html>

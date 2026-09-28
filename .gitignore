@@ -1,0 +1,10 @@
+venv/
+.venv/
+__pycache__/
+*.pyc
+.env
+db.sqlite3
+staticfiles/
+.pytest_cache/
+# Written by the containerized schema export, then moved to ../schema.yml
+/schema.yml
