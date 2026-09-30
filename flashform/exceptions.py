@@ -14,16 +14,25 @@ each field name to its list of messages, so forms can show inline errors::
 
 import logging
 
-from django.core.exceptions import PermissionDenied
+from django.core.exceptions import PermissionDenied, RequestDataTooBig
 from django.http import Http404, JsonResponse
 from rest_framework import exceptions, status
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import APIException, ValidationError
 from rest_framework.response import Response
 from rest_framework.views import exception_handler, set_rollback
 
 logger = logging.getLogger(__name__)
 
 NON_FIELD_KEYS = ("non_field_errors", "detail")
+
+
+class RequestTooLarge(APIException):
+    """The body is over settings.DATA_UPLOAD_MAX_MEMORY_SIZE (Django's 2.5 MB default).
+    Django raises RequestDataTooBig when DRF reads the body; without this it would be a 500."""
+
+    status_code = status.HTTP_413_REQUEST_ENTITY_TOO_LARGE
+    default_detail = "Request body is too large."
+    default_code = "request_too_large"
 
 
 def _messages(detail) -> list[str]:
@@ -92,6 +101,8 @@ def api_exception_handler(exc, context):
         exc = exceptions.NotFound(*exc.args)
     elif isinstance(exc, PermissionDenied):
         exc = exceptions.PermissionDenied(*exc.args)
+    elif isinstance(exc, RequestDataTooBig):
+        exc = RequestTooLarge()
 
     response = exception_handler(exc, context)
 

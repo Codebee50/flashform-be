@@ -8,14 +8,14 @@ Project package is `flashform/` (the PRD calls it `config/`); apps are `accounts
 
 ## Running
 
-Everything runs in Docker Compose (`../docker-compose.yml`): `db` (Postgres 16), `redis`
-(Redis 7), `backend` (Django via `runserver`, which migrates on start) and `worker` (Celery).
-`flashform-be/` is mounted at `/app`, so code edits reload `backend` without a rebuild.
-**All commands run from the repo root via `docker compose exec backend ...`**; never use a
-host venv.
+Everything runs in Docker Compose (`docker-compose.yml` in this directory): `db` (Postgres
+16), `redis` (Redis 7), `backend` (Django via `runserver`, which migrates on start) and
+`worker` (Celery). This directory is mounted at `/app`, so code edits reload `backend`
+without a rebuild. **All commands run from this directory (`flashform-be/`) via
+`docker compose exec backend ...`**; never use a host venv.
 
 ```bash
-cp flashform-be/.env.example flashform-be/.env    # once; see PRD §14
+cp .env.example .env                              # once; see PRD §14
 docker compose up                                 # add -d to detach; --build after requirements change
 docker compose exec backend python manage.py <command>
 docker compose logs -f worker
@@ -25,6 +25,11 @@ docker compose logs -f worker
   cache). The SQLite / in-memory / LocMem fallbacks exist only for when those are unset (CI).
 - Celery broker: `CELERY_BROKER_URL`, default `redis://redis:6379/1`. Tasks go in each app's
   `tasks.py` (autodiscovered) and must be idempotent (`task_acks_late=True`).
+- **Queue tasks with `flashform.background.submit(task, kwargs, countdown=...)`, never
+  `.delay()` / `.apply_async()`.** With `USE_CELERY=False` (no worker, e.g. a single Railway
+  service), or when the broker is down, it runs them in a thread pool in the web process
+  with the task's own retry policy (`autoretry_for`, `max_retries`, `retry_backoff`...).
+  Tests: the `no_celery` fixture switches it off and runs that work inline.
 - **After editing Celery tasks, `docker compose restart worker`**: the worker does not autoreload.
 - Smoke-test the worker: `docker compose exec worker celery -A flashform call flashform.ping`,
   then look for `succeeded ... 'pong'` in `docker compose logs worker`.
@@ -72,8 +77,8 @@ docker compose exec backend python scripts/load_test.py --help   # --students, w
 
 ## Schema export
 
-From the repo root (the container only sees `flashform-be/`, so the schema is written to
-`/app/schema.yml` and then moved to `../schema.yml`):
+The schema lives at the repo root (`../schema.yml`), next to the frontend. The container
+only sees this directory, so it is written to `/app/schema.yml` and then moved up:
 
 ```bash
 make schema            # or, on Windows without make: ./schema.ps1
@@ -106,7 +111,7 @@ make schema            # or, on Windows without make: ./schema.ps1
 
 ## Definition of done (every task)
 
-All commands run from the repo root against the running compose stack.
+All commands run from `flashform-be/` against the running compose stack.
 
 1. Tests written and passing (`docker compose exec backend pytest`).
 2. `docker compose exec backend python manage.py check` is clean, and

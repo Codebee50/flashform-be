@@ -1,13 +1,14 @@
 """Transactional email (PRD §8 "Email sending").
 
-Emails go through Brevo's HTTP API. `EmailService(email)` queues each send on Celery
-(`accounts.tasks.send_email_task`) once the surrounding transaction commits, so the HTTP
-response never waits on Brevo and nothing is sent for a rolled-back write. The task
-retries network errors and Brevo 5xx/429; other 4xx responses are logged and dropped.
-Pass `background=False` to send inline (management commands, the shell).
+Emails go through Brevo's HTTP API. `EmailService(email)` queues each send
+(`accounts.tasks.send_email_task`, via `flashform.background.submit`: on Celery, or in a
+thread with USE_CELERY off) once the surrounding transaction commits, so the HTTP response
+never waits on Brevo and nothing is sent for a rolled-back write. The task retries network
+errors and Brevo 5xx/429; other 4xx responses are logged and dropped. Pass
+`background=False` to send inline (management commands, the shell).
 
 With `BREVO_API_KEY` empty (local dev), emails are logged instead of sent, so they
-show up in `docker compose logs worker`.
+show up in `docker compose logs worker` (or the backend's logs with USE_CELERY off).
 
 Sending never raises to the caller: failures are logged.
 """
@@ -23,6 +24,8 @@ from django.core.mail import EmailMultiAlternatives
 from django.db import transaction
 from django.template.loader import render_to_string
 from django.utils.html import strip_tags
+
+from flashform import background
 
 logger = logging.getLogger(__name__)
 
@@ -120,14 +123,11 @@ TRANSPORTS = {"brevo": deliver_brevo_mail, "smtp": deliver_smtp_mail}
 
 
 def _enqueue(**kwargs) -> None:
-    # Runs after commit, outside the view's error handling: a broker outage must not turn
-    # an already committed request into a 500.
+    # Runs after commit, outside the view's error handling. `submit` never raises: with the
+    # broker down (or USE_CELERY off) the email is sent from a thread of this process.
     from .tasks import send_email_task  # tasks imports this module
 
-    try:
-        send_email_task.delay(**kwargs)
-    except Exception:
-        logger.exception("Could not queue email to %s (subject %r)", kwargs["email"], kwargs["subject"])
+    background.submit(send_email_task, kwargs)
 
 
 class EmailService:

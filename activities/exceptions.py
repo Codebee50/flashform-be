@@ -20,6 +20,12 @@ class ActivityEnded(APIException):
     default_code = "activity_ended"
 
 
+class ActivityLive(APIException):
+    status_code = status.HTTP_409_CONFLICT
+    default_detail = "This activity is still running. End it first."
+    default_code = "activity_live"
+
+
 class NotCurrentQuestion(APIException):
     status_code = status.HTTP_409_CONFLICT
     default_detail = "This question is not open for answers right now."
@@ -42,6 +48,24 @@ class NotTeacherPaced(APIException):
     status_code = status.HTTP_409_CONFLICT
     default_detail = "Only teacher-paced activities can be navigated."
     default_code = "not_teacher_paced"
+
+
+class NotStudentPaced(APIException):
+    status_code = status.HTTP_409_CONFLICT
+    default_detail = "Only student-paced activities can be finished."
+    default_code = "not_student_paced"
+
+
+class NotShortAnswer(APIException):
+    status_code = status.HTTP_409_CONFLICT
+    default_detail = "Only short answer quick questions can be turned into a vote."
+    default_code = "not_short_answer"
+
+
+class NotEnoughAnswers(APIException):
+    status_code = status.HTTP_409_CONFLICT
+    default_detail = "A vote needs at least 2 different answers."
+    default_code = "not_enough_answers"
 
 
 # Not AuthenticationFailed: student views have no authentication classes, and DRF turns

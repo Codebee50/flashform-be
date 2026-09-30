@@ -112,11 +112,14 @@ class RefreshView(PublicAuthView):
 
 
 class LogoutView(PublicAuthView):
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "auth_logout"
+
     @extend_schema(
         operation_id="auth_logout",
         tags=["auth"],
         request=RefreshSerializer,
-        responses={204: None, 400: ErrorSerializer},
+        responses={204: None, 400: ErrorSerializer, 429: ErrorSerializer},
     )
     def post(self, request):
         serializer = RefreshSerializer(data=request.data)

@@ -1,0 +1,57 @@
+# Local dev stack: Postgres, Redis, Django (ASGI via Daphne) and a Celery worker.
+#   docker compose up
+# Backend commands run inside the container: docker compose exec backend <cmd>
+
+# Keeps the project name (and so the container and `flashform_pgdata` volume names) from
+# when this file lived in the repo root.
+name: flashform
+
+x-backend: &backend
+  build: .
+  image: flashform-backend
+  volumes:
+    - .:/app
+  env_file: .env
+  depends_on:
+    db:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+
+services:
+  db:
+    image: postgres:16
+    environment:
+      # Dev-only credentials; must match DATABASE_URL in .env.
+      POSTGRES_USER: flashform
+      POSTGRES_PASSWORD: flashform
+      POSTGRES_DB: flashform
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U flashform -d flashform"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    <<: *backend
+    # Only the backend migrates, so it never races the worker.
+    command: sh -c "python manage.py migrate --noinput && exec python manage.py runserver 0.0.0.0:8000"
+    ports:
+      - "8000:8000"
+
+  worker:
+    <<: *backend
+    command: celery -A flashform worker -l info
+
+volumes:
+  pgdata:

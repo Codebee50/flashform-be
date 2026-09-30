@@ -316,3 +316,13 @@ def test_logout_requires_token(api_client):
     response = api_client.post(LOGOUT, {}, format="json")
 
     assert response.status_code == 400
+
+
+def test_logout_is_throttled(api_client):
+    for _ in range(30):
+        assert api_client.post(LOGOUT, {"refresh": "garbage"}, format="json").status_code == 204
+
+    response = api_client.post(LOGOUT, {"refresh": "garbage"}, format="json")
+
+    assert response.status_code == 429
+    assert response.json()["code"] == "throttled"

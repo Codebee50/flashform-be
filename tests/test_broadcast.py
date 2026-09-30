@@ -54,7 +54,9 @@ def test_a_burst_sends_once_and_schedules_one_trailing_task(activity, sent, sche
             {"type": "responses_updated", "activity_id": activity.id, "version": 1},
         )
     ]
-    scheduled.assert_called_once_with(args=[RESPONSES_UPDATED, activity.id], countdown=0.5)
+    scheduled.assert_called_once_with(
+        kwargs={"type": RESPONSES_UPDATED, "activity_id": activity.id}, countdown=0.5
+    )
 
 
 def test_trailing_event_sends_the_latest_version_and_reopens_scheduling(activity, sent, scheduled):

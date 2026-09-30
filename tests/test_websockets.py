@@ -257,6 +257,54 @@ async def test_quiz_start_and_navigate_notify_students_and_teacher(teacher, room
     await teacher_ws.disconnect()
 
 
+async def test_removing_a_participant_notifies_students_and_teacher(teacher, room):
+    activity = await db(services.start_quick_activity)(room, type="MC")
+    participant, token = await db(join)(room)
+    student_ws = await connected(student_socket(token=token))
+    teacher_ws = await connected(teacher_socket(room, AccessToken.for_user(teacher)))
+
+    response = await db(teacher_api(teacher).delete)(
+        f"/api/activities/{activity.id}/participants/{participant.id}"
+    )
+    assert response.status_code == 204
+
+    version = (await db(Activity.objects.get)(pk=activity.pk)).version
+    assert await student_ws.receive_json_from(timeout=1) == {
+        "type": "participant_removed",
+        "activity_id": activity.id,
+        "version": version,
+        "participant_id": str(participant.id),
+    }
+    # Throttled after the join's event: the trailing event (Celery runs eagerly) carries
+    # the latest version.
+    event = await teacher_ws.receive_json_from(timeout=1)
+    assert event == {"type": "participants_changed", "activity_id": activity.id, "version": version}
+    # Their token no longer opens a socket.
+    assert await close_code(student_socket(token=token)) == 4401
+    await student_ws.disconnect()
+    await teacher_ws.disconnect()
+
+
+async def test_hide_results_notifies_only_the_teacher(teacher, room):
+    activity = await db(services.start_quick_activity)(room, type="MC")
+    student_ws = await connected(student_socket())
+    teacher_ws = await connected(teacher_socket(room, AccessToken.for_user(teacher)))
+
+    response = await db(teacher_api(teacher).patch)(
+        f"/api/activities/{activity.id}", {"hide_results": True}, format="json"
+    )
+    assert response.status_code == 200
+
+    assert await teacher_ws.receive_json_from(timeout=1) == {
+        "type": "activity_updated",
+        "activity_id": activity.id,
+        "version": 1,
+    }
+    assert await student_ws.receive_nothing(timeout=0.2)
+    await student_ws.disconnect()
+    await teacher_ws.disconnect()
+
+
 async def test_students_do_not_get_teacher_events(room):
     activity = await db(services.start_quick_activity)(room, type="MC")
     student_ws = await connected(student_socket())

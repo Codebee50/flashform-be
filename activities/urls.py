@@ -5,9 +5,18 @@ from . import views
 urlpatterns = [
     # Teacher
     path("rooms/<int:room_id>/activities", views.ActivityCreateView.as_view(), name="activity-create"),
+    path("activities", views.ReportListView.as_view(), name="report-list"),
+    path("activities/<int:pk>", views.ActivityDetailView.as_view(), name="activity-detail"),
+    path("activities/<int:pk>/report.csv", views.ReportCSVView.as_view(), name="activity-report-csv"),
     path("activities/<int:pk>/teacher-state", views.TeacherStateView.as_view(), name="activity-teacher-state"),
     path("activities/<int:pk>/navigate", views.ActivityNavigateView.as_view(), name="activity-navigate"),
     path("activities/<int:pk>/end", views.ActivityEndView.as_view(), name="activity-end"),
+    path("activities/<int:pk>/vote", views.ActivityVoteView.as_view(), name="activity-vote"),
+    path(
+        "activities/<int:pk>/participants/<uuid:participant_id>",
+        views.ParticipantRemoveView.as_view(),
+        name="activity-participant-remove",
+    ),
     # Student
     path("rooms/<str:code>/join", views.JoinView.as_view(), name="room-join"),
     path("participant/state", views.ParticipantStateView.as_view(), name="participant-state"),
@@ -16,5 +25,6 @@ urlpatterns = [
         views.ParticipantResponseView.as_view(),
         name="participant-response",
     ),
+    path("participant/finish", views.ParticipantFinishView.as_view(), name="participant-finish"),
     path("participant/leave", views.ParticipantLeaveView.as_view(), name="participant-leave"),
 ]

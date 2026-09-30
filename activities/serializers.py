@@ -5,6 +5,8 @@ reaches students through `FeedbackSerializer`, which `services.feedback_for` fil
 when feedback is on and the student's response is locked.
 """
 
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
 from rest_framework import serializers
 
 from .models import (
@@ -53,15 +55,19 @@ class ActivityStartSerializer(serializers.Serializer):
     mode = serializers.ChoiceField(
         choices=ActivityMode.choices,
         required=False,
-        help_text="QUIZ only, required. Only TEACHER_PACED is supported for now.",
+        help_text="QUIZ only, required. TEACHER_PACED: everyone sees the question the "
+        "teacher shows. STUDENT_PACED: each student sees every question, can change answers "
+        "until they press Finish.",
     )
     show_feedback = serializers.BooleanField(
         default=False,
-        help_text="QUIZ only: after submitting, students see correct/incorrect and the "
-        "explanation, and can no longer change that answer.",
+        help_text="QUIZ only: answers lock on submit, and students then see correct/incorrect "
+        "and the explanation for that question.",
     )
     shuffle_questions = serializers.BooleanField(
-        default=False, help_text="QUIZ only, student-paced only."
+        default=False,
+        help_text="QUIZ, STUDENT_PACED only: each student gets the questions in their own "
+        "random order.",
     )
 
     def validate(self, attrs):
@@ -75,11 +81,7 @@ class ActivityStartSerializer(serializers.Serializer):
         }
         if errors:
             raise serializers.ValidationError(errors)
-        if attrs["mode"] == ActivityMode.STUDENT_PACED:
-            raise serializers.ValidationError(
-                {"mode": ["Student-paced quizzes are not supported yet."]}, code="not_supported"
-            )
-        if attrs["shuffle_questions"]:
+        if attrs["shuffle_questions"] and attrs["mode"] != ActivityMode.STUDENT_PACED:
             raise serializers.ValidationError(
                 {"shuffle_questions": ["Shuffling is only for student-paced quizzes."]}
             )
@@ -92,8 +94,39 @@ class NavigateSerializer(serializers.Serializer):
     )
 
 
+class ActivityUpdateSerializer(serializers.Serializer):
+    hide_results = serializers.BooleanField(
+        help_text="Hide the answer distribution on the teacher's live view (for projecting). "
+        "Students never see results either way."
+    )
+
+
 class JoinSerializer(serializers.Serializer):
     name = serializers.CharField(max_length=40, help_text="Display name, 1–40 characters, trimmed.")
+
+
+class ReportListQuerySerializer(serializers.Serializer):
+    room = serializers.IntegerField(
+        required=False, min_value=1, help_text="Only this room's reports. Omit for all rooms."
+    )
+
+
+class ReportCSVQuerySerializer(serializers.Serializer):
+    tz = serializers.CharField(
+        required=False,
+        default="UTC",
+        max_length=64,
+        help_text="IANA time zone for joined_at / finished_at, e.g. Europe/London (the "
+        "browser's). Default UTC.",
+    )
+
+    def validate_tz(self, value):
+        try:
+            return ZoneInfo(value)
+        # OSError: a tzdata directory such as "America" (IsADirectoryError), or a name the
+        # filesystem rejects.
+        except (ZoneInfoNotFoundError, ValueError, OSError):
+            raise serializers.ValidationError("Unknown time zone.")
 
 
 class ResponseSubmitSerializer(serializers.Serializer):
@@ -174,10 +207,29 @@ class TeacherQuestionSerializer(serializers.ModelSerializer):
 
 class TeacherParticipantSerializer(serializers.ModelSerializer):
     joined_at = serializers.DateTimeField(source="created_at")
+    finished_at = serializers.DateTimeField(
+        allow_null=True, help_text="Student-paced: when they pressed Finish; null until then."
+    )
+    answered_count = serializers.IntegerField(
+        help_text="Questions this participant has answered (progress, e.g. 4 of 10)."
+    )
+    question_count = serializers.IntegerField(help_text="Questions in the activity.")
+    score = serializers.IntegerField(
+        help_text="Correct answers. Out of the state's total_possible (PRD §17)."
+    )
 
     class Meta:
         model = Participant
-        fields = ["id", "name", "joined_at", "finished_at", "last_seen_at"]
+        fields = [
+            "id",
+            "name",
+            "joined_at",
+            "finished_at",
+            "last_seen_at",
+            "answered_count",
+            "question_count",
+            "score",
+        ]
         read_only_fields = fields
 
 
@@ -226,8 +278,44 @@ class TeacherStateSerializer(serializers.Serializer):
         many=True, help_text="Joined participants, excluding removed ones."
     )
     participant_count = serializers.IntegerField()
+    total_possible = serializers.IntegerField(
+        help_text="Questions with a correct answer: the most a participant can score."
+    )
     responses = TeacherResponseSerializer(many=True)
     summaries = QuestionSummarySerializer(many=True)
+
+
+class ReportRoomSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    name = serializers.CharField()
+    code = serializers.CharField()
+
+
+class ReportSerializer(serializers.Serializer):
+    id = serializers.IntegerField(source="activity.id")
+    room = ReportRoomSerializer(source="activity.room")
+    type = serializers.ChoiceField(source="activity.type", choices=ActivityType.choices)
+    mode = serializers.ChoiceField(source="activity.mode", choices=ActivityMode.choices)
+    quiz_title = serializers.CharField(
+        source="activity.quiz_title", help_text='"" for quick questions.'
+    )
+    started_at = serializers.DateTimeField(source="activity.started_at")
+    ended_at = serializers.DateTimeField(source="activity.ended_at")
+    participant_count = serializers.IntegerField(
+        help_text="Excludes participants who left while it was live."
+    )
+    question_count = serializers.IntegerField()
+    total_possible = serializers.IntegerField(
+        help_text="Questions with a correct answer: the most a participant can score."
+    )
+    avg_score = serializers.FloatField(
+        allow_null=True,
+        help_text="Mean correct answers per participant (2 decimals); null without "
+        "participants or when total_possible is 0.",
+    )
+    avg_percent = serializers.FloatField(
+        allow_null=True, help_text="avg_score as a percentage of total_possible (1 decimal)."
+    )
 
 
 # --- Student ----------------------------------------------------------------
@@ -263,7 +351,11 @@ class StudentResponseSerializer(serializers.Serializer):
 
 class StudentQuestionSerializer(serializers.Serializer):
     id = serializers.IntegerField(source="question.id")
-    order = serializers.IntegerField(source="question.order")
+    order = serializers.IntegerField(
+        source="question.order",
+        help_text="Position in the quiz (0-based). With shuffled questions this is not the "
+        "position on the student's screen: number questions by their place in `questions`.",
+    )
     type = serializers.ChoiceField(source="question.type", choices=QuestionType.choices)
     prompt = serializers.CharField(source="question.prompt", allow_blank=True)
     choices = serializers.ListField(source="question.display_choices", child=serializers.CharField())
@@ -299,6 +391,6 @@ class ParticipantStateSerializer(serializers.Serializer):
     question_count = serializers.IntegerField()
     questions = StudentQuestionSerializer(
         many=True,
-        help_text="Visible questions: the current one (teacher-paced), all (student-paced), "
-        "none once the activity has ended.",
+        help_text="Visible questions: the current one (teacher-paced), all (student-paced, "
+        "in this student's own order when shuffled), none once the activity has ended.",
     )

@@ -143,6 +143,12 @@ BROADCAST_REDIS_URL = REDIS_URL
 
 
 # --- Celery -----------------------------------------------------------------
+# Background tasks (emails, trailing teacher events) are queued through
+# flashform/background.py. With USE_CELERY off, no worker or broker is needed: they run in
+# a thread pool inside the web process instead (e.g. a single Railway service).
+
+USE_CELERY = env_bool("USE_CELERY", default=True)
+
 # The broker gets its own Redis database so it never shares keys with the cache
 # or channel layer.
 
@@ -190,6 +196,7 @@ REST_FRAMEWORK = {
         "auth_register": "20/hour",
         "auth_login": "10/min",
         "auth_refresh": "30/min",
+        "auth_logout": "30/min",
         # resend-verification and password-reset: per client IP, and (auth_email_address)
         # per target email. Each endpoint has its own counters.
         "auth_resend_verification": "10/hour",

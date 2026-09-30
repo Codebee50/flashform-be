@@ -7,3 +7,6 @@ __pycache__
 .pytest_cache
 staticfiles
 schema.yml
+docker-compose.yml
+Makefile
+schema.ps1

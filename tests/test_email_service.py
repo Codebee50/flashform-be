@@ -18,7 +18,7 @@ from accounts.tasks import send_email_task
 from flashform.celery import app as celery_app
 
 POST = "accounts.email_service.requests.post"
-DELAY = "accounts.tasks.send_email_task.delay"
+APPLY_ASYNC = "accounts.tasks.send_email_task.apply_async"
 
 
 def brevo_response(status_code: int, body: str = '{"messageId": "<id@brevo>"}') -> mock.Mock:
@@ -154,20 +154,27 @@ def test_task_gives_up_after_max_retries(brevo_key, eager_retries, caplog):
 
 @pytest.mark.django_db
 def test_background_send_is_queued_only_after_commit(django_capture_on_commit_callbacks):
-    with mock.patch(DELAY) as delay:
+    with mock.patch(APPLY_ASYNC) as apply_async:
         with django_capture_on_commit_callbacks(execute=True):
             with transaction.atomic():
                 assert EmailService("ada@example.com").send_raw_mail("Hi", "<p>Hi</p>") is True
-            delay.assert_not_called()
+            apply_async.assert_not_called()
 
-    delay.assert_called_once_with(
-        email="ada@example.com", subject="Hi", html="<p>Hi</p>", text="Hi", transport="brevo"
+    apply_async.assert_called_once_with(
+        kwargs={
+            "email": "ada@example.com",
+            "subject": "Hi",
+            "html": "<p>Hi</p>",
+            "text": "Hi",
+            "transport": "brevo",
+        },
+        countdown=None,
     )
 
 
 @pytest.mark.django_db
 def test_rolled_back_transaction_queues_nothing(django_capture_on_commit_callbacks):
-    with mock.patch(DELAY) as delay:
+    with mock.patch(APPLY_ASYNC) as apply_async:
         with django_capture_on_commit_callbacks(execute=True) as callbacks:
             with pytest.raises(RuntimeError):
                 with transaction.atomic():
@@ -175,16 +182,19 @@ def test_rolled_back_transaction_queues_nothing(django_capture_on_commit_callbac
                     raise RuntimeError("write failed")
 
     assert callbacks == []
-    delay.assert_not_called()
+    apply_async.assert_not_called()
 
 
 @pytest.mark.django_db
-def test_broker_outage_is_logged_not_raised(django_capture_on_commit_callbacks, caplog):
-    with mock.patch(DELAY, side_effect=OperationalError("redis down")):
+def test_broker_outage_sends_the_email_from_this_process(
+    brevo, inline_background, django_capture_on_commit_callbacks, caplog
+):
+    with mock.patch(APPLY_ASYNC, side_effect=OperationalError("redis down")):
         with django_capture_on_commit_callbacks(execute=True):
-            EmailService("ada@example.com").send_raw_mail("Hi", "<p>Hi</p>")
+            assert EmailService("ada@example.com").send_raw_mail("Hi", "<p>Hi</p>") is True
 
-    assert "Could not queue email to ada@example.com" in caplog.text
+    assert "Could not queue accounts.tasks.send_email_task on Celery" in caplog.text
+    assert [p["to"] for p in brevo.payloads] == [[{"email": "ada@example.com"}]]
 
 
 @pytest.mark.django_db

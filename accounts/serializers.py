@@ -61,7 +61,8 @@ class LoginSerializer(serializers.Serializer):
 
 
 class RefreshSerializer(serializers.Serializer):
-    refresh = serializers.CharField()
+    # Our refresh tokens are ~230 characters; the cap only bounds garbage.
+    refresh = serializers.CharField(max_length=1024)
 
 
 class TokenPairSerializer(serializers.Serializer):

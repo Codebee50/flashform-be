@@ -25,6 +25,39 @@ def api_client():
     return APIClient()
 
 
+class InlineBackground:
+    """What `flashform.background` ran in "threads": `delays` of each spawn, and each retry
+    `sleeps` (nothing actually waits)."""
+
+    def __init__(self):
+        self.delays: list[float] = []
+        self.sleeps: list[float] = []
+
+
+@pytest.fixture
+def inline_background():
+    """Run `flashform.background`'s thread work inline, in the test's thread (so it sees the
+    test's DB transaction), without waiting for countdowns or retry backoff."""
+    ran = InlineBackground()
+
+    def spawn(fn, delay):
+        ran.delays.append(delay)
+        fn()
+
+    with (
+        mock.patch("flashform.background._spawn", side_effect=spawn),
+        mock.patch("flashform.background.time.sleep", side_effect=ran.sleeps.append),
+    ):
+        yield ran
+
+
+@pytest.fixture
+def no_celery(settings, inline_background):
+    """USE_CELERY off, as on a deploy without a worker; background work runs inline."""
+    settings.USE_CELERY = False
+    return inline_background
+
+
 TEACHER_PASSWORD = "correct-horse-battery"
 
 

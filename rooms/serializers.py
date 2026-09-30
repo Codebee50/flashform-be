@@ -3,6 +3,7 @@ from rest_framework import serializers
 from activities.models import ActivityMode, ActivityType
 
 from .models import Room
+from .services import CUSTOM_CODE_MESSAGE
 
 
 class LiveActivitySummarySerializer(serializers.Serializer):
@@ -34,6 +35,8 @@ class RoomCreateSerializer(serializers.Serializer):
         required=False,
         allow_blank=True,
         allow_null=True,
+        max_length=10,
+        error_messages={"max_length": CUSTOM_CODE_MESSAGE},
         help_text="Optional custom code: 4–10 characters A–Z 0–9, stored uppercase, unique "
         "case-insensitively. Omit it (or send null or \"\") to get a generated 6-character code.",
     )

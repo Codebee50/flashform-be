@@ -24,11 +24,14 @@ from channels.layers import get_channel_layer
 from django.conf import settings
 from django.db import transaction
 
+from flashform import background
+
 logger = logging.getLogger(__name__)
 
 THROTTLE_MS = 500
 # How long a "trailing event scheduled" flag lives. The trailing task deletes it after
-# THROTTLE_MS; the TTL only matters if the worker is down, so throttling recovers.
+# THROTTLE_MS; the TTL only matters if that task is lost (worker down, process restarted),
+# so throttling recovers.
 PENDING_MS = 5000
 
 ACTIVITY_STARTED = "activity_started"
@@ -147,13 +150,17 @@ def send_throttled(type: str, room_id: int, activity_id: int, version: int) -> N
         if store.set(_pending_key(type, activity_id), px=PENDING_MS, nx=True):
             from .tasks import send_trailing_event
 
-            send_trailing_event.apply_async(args=[type, activity_id], countdown=THROTTLE_MS / 1000)
+            background.submit(
+                send_trailing_event,
+                {"type": type, "activity_id": activity_id},
+                countdown=THROTTLE_MS / 1000,
+            )
     except Exception:
         logger.exception("Could not broadcast %s for activity %s", type, activity_id)
 
 
 def send_trailing(type: str, activity_id: int) -> None:
-    """The trailing event of a throttled burst (run by the Celery task).
+    """The trailing event of a throttled burst (run by `tasks.send_trailing_event`).
 
     Clears the pending flag *before* reading the version: a write committing meanwhile is
     either included in the version read here or schedules its own trailing event.

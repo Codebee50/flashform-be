@@ -10,14 +10,18 @@ rows), and every state change gets its own version. Starting an activity locks t
 row instead, so two concurrent starts can't both find "no LIVE activity".
 """
 
+import csv
 import hashlib
+import io
+import random
 import secrets
+from collections import Counter
 from dataclasses import dataclass, field
-from datetime import timedelta
+from datetime import datetime, timedelta, tzinfo
 
 from django.contrib.auth.models import AbstractBaseUser
 from django.db import transaction
-from django.db.models import QuerySet
+from django.db.models import Count, QuerySet
 from django.utils import timezone
 from rest_framework.exceptions import NotFound, ValidationError
 
@@ -29,10 +33,14 @@ from rooms.services import get_public_room, normalize_code, owned_rooms
 from . import broadcast
 from .exceptions import (
     ActivityEnded,
+    ActivityLive,
     AlreadyFinished,
     InvalidParticipantToken,
     NoLiveActivity,
     NotCurrentQuestion,
+    NotEnoughAnswers,
+    NotShortAnswer,
+    NotStudentPaced,
     NotTeacherPaced,
     ResponseLocked,
     RoomLocked,
@@ -117,6 +125,34 @@ class TeacherState:
     def participant_count(self) -> int:
         return len(self.participants)
 
+    @property
+    def total_possible(self) -> int:
+        return total_possible(self.questions)
+
+
+@dataclass
+class ReportRow:
+    """One ENDED activity in the reports list (PRD RP1)."""
+
+    activity: Activity
+    participant_count: int
+    question_count: int
+    total_possible: int
+    correct_count: int  # correct responses of all listed participants together
+
+    @property
+    def avg_score(self) -> float | None:
+        """Mean score per participant; None without participants or gradable questions."""
+        if not self.participant_count or not self.total_possible:
+            return None
+        return round(self.correct_count / self.participant_count, 2)
+
+    @property
+    def avg_percent(self) -> float | None:
+        if not self.participant_count:
+            return None
+        return percent(self.correct_count / self.participant_count, self.total_possible)
+
 
 # --- Helpers ----------------------------------------------------------------
 
@@ -128,6 +164,15 @@ def hash_token(token: str) -> str:
 def normalize_answer(text: str) -> str:
     """SA matching: trimmed, case-insensitive (PRD §17)."""
     return text.strip().casefold()
+
+
+def total_possible(questions) -> int:
+    """Questions without a correct answer don't count towards the score (PRD §17)."""
+    return sum(1 for question in questions if question.has_correct_answer)
+
+
+def percent(score: float, total: int) -> float | None:
+    return round(score / total * 100, 1) if total else None
 
 
 def _lock_activity(activity_id: int) -> Activity:
@@ -283,6 +328,45 @@ def start_quiz_activity(
         )
 
 
+def start_vote(activity: Activity) -> Activity:
+    """Turn a LIVE short answer quick question into a vote (PRD QQ4): its distinct answers,
+    trimmed and case-insensitive (PRD §17), become the options of a new quick MC question
+    with the same prompt, which replaces it as the room's LIVE activity. Each option is
+    spelled as its earliest submission, and options are in submission order. Answers of
+    removed participants (or ones who left) don't count.
+
+    Only works while the SA question is LIVE, so a retry after the vote started (which
+    ended it) is a 409 `activity_ended`, never a second vote. 409 `not_short_answer` for
+    any other activity; 409 `not_enough_answers` with fewer than 2 distinct answers.
+    """
+    with transaction.atomic():
+        # Room before activity, the order `_launch` locks them in, so a concurrent start
+        # can't deadlock with us.
+        room = Room.objects.select_for_update().get(pk=activity.room_id)
+        activity = _lock_activity(activity.pk)
+        question = activity.questions.first()
+        if activity.type != ActivityType.QUICK or question.type != QuestionType.SA:
+            raise NotShortAnswer()
+        if not activity.is_live:
+            raise ActivityEnded()
+
+        answers = (
+            Response.objects.filter(question=question, participant__is_removed=False)
+            .order_by("submitted_at", "id")
+            .values_list("text_answer", flat=True)
+        )
+        choices: dict[str, str] = {}
+        for text in answers:
+            choices.setdefault(normalize_answer(text), text)
+        if len(choices) < 2:
+            raise NotEnoughAnswers()
+
+        vote = {"type": QuestionType.MC, "prompt": question.prompt, "choices": list(choices.values())}
+        return _launch(
+            room, type=ActivityType.QUICK, mode=ActivityMode.TEACHER_PACED, questions=[vote]
+        )
+
+
 def navigate(activity: Activity, index: int) -> Activity:
     """Move a teacher-paced activity to question `index` (Next / Previous, PRD A1).
     Responses to the question being left are locked (PRD §17); students who hadn't
@@ -322,14 +406,66 @@ def end_activity(activity: Activity) -> Activity:
     return activity
 
 
+def update_activity(activity: Activity, *, hide_results: bool) -> Activity:
+    """Change the teacher's display settings (PRD L4: Hide results). Stored on the activity
+    so every teacher tab (laptop and projector) agrees and a reload keeps it. Allowed on
+    ENDED activities too (the report is projected the same way).
+
+    Students never see results, so only the teacher is notified. Idempotent: setting the
+    current value changes nothing (no version bump, no event).
+    """
+    with transaction.atomic():
+        activity = _lock_activity(activity.pk)
+        if activity.hide_results != hide_results:
+            activity.hide_results = hide_results
+            _bump_version(activity, "hide_results")
+            broadcast.activity_updated(activity, students=False)
+    return activity
+
+
+def remove_participant(activity: Activity, participant_id) -> None:
+    """The teacher removes a participant (PRD L5): their token stops working, they drop out
+    of teacher-state and the report (answers are kept in the DB), and their screen goes
+    back to the join screen (`participant_removed`). They may join again unless the room
+    is locked: their old token no longer lets them past the lock.
+
+    Works on ENDED activities too, so a student idling on the waiting screen can be
+    removed. Idempotent: removing a removed (or departed) participant changes nothing.
+    404 `participant_not_found` if they aren't in this activity.
+    """
+    with transaction.atomic():
+        activity = _lock_activity(activity.pk)
+        participant = activity.participants.filter(pk=participant_id).first()
+        if participant is None:
+            raise NotFound("Participant not found.", code="participant_not_found")
+        if participant.is_removed:
+            return
+        participant.is_removed = True
+        participant.save(update_fields=["is_removed", "updated_at"])
+        _bump_version(activity)
+        broadcast.participant_removed(activity, participant.id)
+
+
 def get_teacher_state(activity: Activity) -> TeacherState:
-    """Everything the teacher's live view needs, in a fixed number of queries."""
+    """Everything the teacher's live view needs, in a fixed number of queries.
+
+    Each participant also gets `answered_count` and `question_count` (their progress,
+    e.g. "4/10", PRD L3) and `score` (correct answers, PRD §17), set like query
+    annotations. For an ENDED activity this is also the report detail (PRD RP2).
+    """
     activity = Activity.objects.get(pk=activity.pk)
     questions = list(activity.questions.all())
     participants = list(activity.participants.filter(is_removed=False))
     responses = list(
         Response.objects.filter(participant__activity=activity, participant__is_removed=False)
     )
+
+    answered = Counter(response.participant_id for response in responses)
+    correct = Counter(response.participant_id for response in responses if response.is_correct)
+    for participant in participants:
+        participant.answered_count = answered[participant.id]
+        participant.question_count = len(questions)
+        participant.score = correct[participant.id]
 
     by_question: dict[int, list[Response]] = {question.id: [] for question in questions}
     for response in responses:
@@ -369,17 +505,157 @@ def get_teacher_state(activity: Activity) -> TeacherState:
     )
 
 
+# --- Reports ----------------------------------------------------------------
+#
+# A report covers the same participants as teacher-state (not the removed/left ones), so
+# the list, the detail page (teacher-state) and the CSV always agree.
+
+CSV_PROMPT_LENGTH = 60  # PRD RP3
+CSV_COLUMNS = ["name", "joined_at", "finished_at", "score", "total_possible", "percent"]
+# Spreadsheets run cells starting with these as formulas (CSV injection). Names and
+# answers come from students, so such cells get a leading apostrophe.
+FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def list_reports(owner: AbstractBaseUser, room: Room | None = None) -> list[ReportRow]:
+    """The teacher's ENDED activities, newest first, optionally for one room (PRD RP1).
+    Four queries however many activities there are."""
+    activities = owned_activities(owner).filter(status=ActivityStatus.ENDED).select_related("room")
+    if room is not None:
+        activities = activities.filter(room=room)
+    activities = list(activities)
+    ids = [activity.id for activity in activities]
+
+    participant_counts = dict(
+        Participant.objects.filter(activity_id__in=ids, is_removed=False)
+        .order_by()
+        .values_list("activity_id")
+        .annotate(Count("id"))
+    )
+    correct_counts = dict(
+        Response.objects.filter(
+            participant__activity_id__in=ids, participant__is_removed=False, is_correct=True
+        )
+        .order_by()
+        .values_list("participant__activity_id")
+        .annotate(Count("id"))
+    )
+    questions: dict[int, list[ActivityQuestion]] = {activity_id: [] for activity_id in ids}
+    for question in ActivityQuestion.objects.filter(activity_id__in=ids).only(
+        "activity_id", "type", "correct_index", "accepted_answers"
+    ):
+        questions[question.activity_id].append(question)
+
+    return [
+        ReportRow(
+            activity=activity,
+            participant_count=participant_counts.get(activity.id, 0),
+            question_count=len(questions[activity.id]),
+            total_possible=total_possible(questions[activity.id]),
+            correct_count=correct_counts.get(activity.id, 0),
+        )
+        for activity in activities
+    ]
+
+
+def _csv_cell(value: str) -> str:
+    return f"'{value}" if value.startswith(FORMULA_PREFIXES) else value
+
+
+def _csv_header(question: ActivityQuestion) -> str:
+    """`Q3: <prompt>`, the prompt on one line and truncated to 60 characters (PRD RP3)."""
+    prompt = " ".join(question.prompt.split())
+    if len(prompt) > CSV_PROMPT_LENGTH:
+        prompt = prompt[: CSV_PROMPT_LENGTH - 1].rstrip() + "…"
+    label = f"Q{question.order + 1}"
+    return f"{label}: {prompt}" if prompt else label
+
+
+def _answer_text(question: ActivityQuestion, response: Response | None) -> str:
+    """The chosen option's text (MC/TF) or the typed answer (SA); blank if unanswered."""
+    if response is None:
+        return ""
+    choices = question.display_choices
+    if response.choice_index is not None and response.choice_index < len(choices):
+        return choices[response.choice_index]
+    return response.text_answer
+
+
+def distinct_names(participants: list[Participant]) -> list[str]:
+    """Names in join order, repeats suffixed `(2)`, `(3)`… as in the teacher UI (PRD S2)."""
+    seen: Counter[str] = Counter()
+    names = []
+    for participant in participants:
+        seen[participant.name] += 1
+        count = seen[participant.name]
+        names.append(participant.name if count == 1 else f"{participant.name} ({count})")
+    return names
+
+
+def report_csv(activity: Activity, tz: tzinfo) -> str:
+    """The report as CSV (PRD RP3): one row per participant, then one column per question
+    with the answer text. Times are `YYYY-MM-DD HH:MM:SS` in `tz`."""
+
+    def when(moment: datetime | None) -> str:
+        return moment.astimezone(tz).strftime("%Y-%m-%d %H:%M:%S") if moment else ""
+
+    state = get_teacher_state(activity)
+    responses = {
+        (response.participant_id, response.question_id): response for response in state.responses
+    }
+    total = state.total_possible
+
+    out = io.StringIO()
+    writer = csv.writer(out)
+    writer.writerow(CSV_COLUMNS + [_csv_cell(_csv_header(question)) for question in state.questions])
+    for participant, name in zip(state.participants, distinct_names(state.participants)):
+        score_percent = percent(participant.score, total)
+        writer.writerow(
+            [
+                _csv_cell(name),
+                when(participant.created_at),
+                when(participant.finished_at),
+                participant.score,
+                total,
+                "" if score_percent is None else score_percent,
+            ]
+            + [
+                _csv_cell(_answer_text(question, responses.get((participant.id, question.id))))
+                for question in state.questions
+            ]
+        )
+    return out.getvalue()
+
+
+def report_filename(activity: Activity) -> str:
+    return f"report-{activity.room.code}-{activity.started_at:%Y-%m-%d}-{activity.id}.csv"
+
+
+def delete_report(activity: Activity) -> None:
+    """Delete an ENDED activity with its questions, participants and responses (PRD RP4).
+    409 `activity_live` while it is still running: end it first. ENDED is final, so the
+    check can't race with the activity going live again."""
+    if activity.is_live:
+        raise ActivityLive()
+    activity.delete()
+
+
 # --- Student ----------------------------------------------------------------
 
 
-def join_room(code: str, name: str) -> JoinResult:
+def join_room(code: str, name: str, token: str | None = None) -> JoinResult:
     """Join the room's LIVE activity as a new participant (PRD S1).
+
+    A locked room refuses new students (PRD R4), but students who already joined are
+    unaffected: `token`, the participant token from an earlier (or the current) activity
+    in this room, lets them re-join the next activity with their saved name (PRD §7).
+    Tokens of students who left or were removed don't count.
 
     404 `room_not_found`, 423 `room_locked`, 409 `no_live_activity`. The raw token is only
     returned here; only its sha256 is stored.
     """
     room = get_public_room(code)
-    if room.is_locked:
+    if room.is_locked and not (token and participant_in_room(token, room)):
         raise RoomLocked()
 
     token = secrets.token_urlsafe(32)
@@ -389,8 +665,16 @@ def join_room(code: str, name: str) -> JoinResult:
         )
         if activity is None:
             raise NoLiveActivity()
+        question_order = None
+        if activity.shuffle_questions:
+            # PRD A3: each student gets their own order, fixed for the whole activity.
+            orders = list(activity.questions.values_list("order", flat=True))
+            question_order = random.sample(orders, len(orders))
         participant = Participant.objects.create(
-            activity=activity, name=name.strip(), token_hash=hash_token(token)
+            activity=activity,
+            name=name.strip(),
+            token_hash=hash_token(token),
+            question_order=question_order,
         )
         _bump_version(activity)
         broadcast.participants_changed(activity)
@@ -510,10 +794,42 @@ def submit_response(
     return ResponseView(response, feedback_for(activity, question, response))
 
 
-def leave(participant: Participant) -> None:
-    """The student leaves (PRD S6): their token stops working; their answers are kept."""
+def finish(participant: Participant) -> ParticipantState:
+    """The student presses Finish in a student-paced activity (PRD A1): every answer they
+    gave is locked, and they can't answer anything else. Unanswered questions stay
+    unanswered.
+
+    Idempotent: finishing again changes nothing (no version bump, no event), so retrying
+    is safe. 409 `activity_ended` or `not_student_paced`.
+    """
     with transaction.atomic():
         activity = _lock_activity(participant.activity_id)
+        participant.refresh_from_db(fields=["is_removed", "finished_at"])
+        if participant.is_removed:
+            raise InvalidParticipantToken()
+        if not activity.is_live:
+            raise ActivityEnded()
+        if activity.mode != ActivityMode.STUDENT_PACED:
+            raise NotStudentPaced()
+        if participant.finished_at is None:
+            participant.finished_at = timezone.now()
+            participant.save(update_fields=["finished_at", "updated_at"])
+            participant.responses.filter(is_locked=False).update(is_locked=True)
+            _bump_version(activity)
+            broadcast.participants_changed(activity)
+    return get_participant_state(participant)
+
+
+def leave(participant: Participant) -> None:
+    """The student leaves (PRD S6): their token stops working; their answers are kept.
+
+    Leaving an ENDED activity (the usual case: "Leave room" on the waiting screen after
+    class) changes nothing, so the student stays in that activity's report.
+    """
+    with transaction.atomic():
+        activity = _lock_activity(participant.activity_id)
+        if not activity.is_live:
+            return
         participant.is_removed = True
         participant.save(update_fields=["is_removed", "updated_at"])
         _bump_version(activity)

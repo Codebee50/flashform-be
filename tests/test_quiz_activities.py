@@ -231,8 +231,7 @@ def test_start_quiz_with_no_questions_is_rejected(teacher_client, teacher, room)
         ({"quiz_id": None}, "quiz_id"),
         ({"mode": None}, "mode"),
         ({"mode": "SIDEWAYS"}, "mode"),
-        ({"mode": "STUDENT_PACED"}, "mode"),
-        ({"shuffle_questions": True}, "shuffle_questions"),
+        ({"shuffle_questions": True}, "shuffle_questions"),  # teacher-paced
     ],
 )
 def test_start_quiz_validates_input(teacher_client, room, quiz, extra, field):
