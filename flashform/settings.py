@@ -69,8 +69,6 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
-    # Serves collectstatic output (the admin's CSS/JS) when DEBUG is off.
-    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -78,6 +76,15 @@ MIDDLEWARE = [
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
+
+# Production serves collectstatic output (the admin's CSS/JS) with WhiteNoise. In dev,
+# runserver serves static files itself, and the source mount hides the image's
+# /app/staticfiles, which WhiteNoise would warn about on every request.
+if not DEBUG:
+    MIDDLEWARE.insert(
+        MIDDLEWARE.index("django.middleware.security.SecurityMiddleware") + 1,
+        "whitenoise.middleware.WhiteNoiseMiddleware",
+    )
 
 ROOT_URLCONF = "flashform.urls"
 
@@ -104,6 +111,15 @@ ASGI_APPLICATION = "flashform.asgi.application"
 # --- Database ---------------------------------------------------------------
 # Postgres everywhere (docker-compose `db` service locally). SQLite is only a
 # fallback when DATABASE_URL is unset; production must use Postgres (PRD §6).
+
+# On Railway, an empty or mistyped `${{Postgres.DATABASE_URL}}` reference would fall back to
+# SQLite inside the container: migrations "succeed" there and the data is gone on the next
+# deploy. Fail loudly instead (Railway sets RAILWAY_ENVIRONMENT_ID at runtime).
+if os.environ.get("RAILWAY_ENVIRONMENT_ID") and not os.environ.get("DATABASE_URL", "").strip():
+    raise ImproperlyConfigured(
+        "DATABASE_URL is empty. On Railway, set it to ${{Postgres.DATABASE_URL}} "
+        "(use your Postgres service's name)."
+    )
 
 # An empty DATABASE_URL counts as unset.
 DATABASE_URL = os.environ.get("DATABASE_URL", "").strip() or (

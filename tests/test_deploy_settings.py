@@ -52,6 +52,25 @@ def test_debug_off_turns_on_https_settings():
     assert "whitenoise.middleware.WhiteNoiseMiddleware" in prod["middleware"]
 
 
+def test_railway_without_database_url_fails_instead_of_using_sqlite():
+    environ = {
+        **os.environ,
+        "DJANGO_SETTINGS_MODULE": "flashform.settings",
+        "DJANGO_DEBUG": "False",
+        "DJANGO_SECRET_KEY": "test-only",
+        "RAILWAY_ENVIRONMENT_ID": "test-env",
+        "DATABASE_URL": "",
+    }
+    result = subprocess.run(
+        [sys.executable, "-c", "import django; django.setup()"],
+        env=environ,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0
+    assert "DATABASE_URL is empty" in result.stderr
+
+
 def test_ssl_redirect_can_be_switched_off():
     assert load_prod_settings(SECURE_SSL_REDIRECT="False")["ssl_redirect"] is False
 
