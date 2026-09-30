@@ -7,7 +7,7 @@ with the room code and a name. Students do not need an account.
 This repository is the backend (Django API and WebSockets) and the main home for the
 project's documentation. The frontend is a separate repository.
 
-**Status:** prototype, under active development.
+**Status:** MVP, under active development.
 
 ## Links
 
