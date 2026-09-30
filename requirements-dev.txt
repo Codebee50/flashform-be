@@ -1,0 +1,10 @@
+# Production dependencies plus tests and the load test. docker-compose builds with this file;
+# the production image (Railway) installs requirements.txt only.
+-r requirements.txt
+
+# Testing / load testing
+pytest>=8.3,<9.0
+pytest-django>=4.11,<5.0
+pytest-asyncio>=1.0,<2.0
+httpx>=0.28,<1.0
+websockets>=15.0,<16.0

@@ -12,6 +12,8 @@ psycopg[binary]>=3.2,<4.0
 channels>=4.2,<5.0
 channels-redis>=4.2,<5.0
 daphne>=4.1,<5.0
+# Serves collectstatic output (admin CSS/JS) from the ASGI app.
+whitenoise>=6.9,<7.0
 # Broadcast throttle keys (SET NX PX); also pulled in by channels-redis and celery[redis].
 redis>=5.0,<7.0
 
@@ -20,10 +22,3 @@ celery[redis]>=5.5,<6.0
 
 # Transactional email (Brevo HTTP API)
 requests>=2.32,<3.0
-
-# Testing / load testing
-pytest>=8.3,<9.0
-pytest-django>=4.11,<5.0
-pytest-asyncio>=1.0,<2.0
-httpx>=0.28,<1.0
-websockets>=15.0,<16.0

@@ -16,11 +16,15 @@ without a rebuild. **All commands run from this directory (`flashform-be/`) via
 
 ```bash
 cp .env.example .env                              # once; see PRD §14
-docker compose up                                 # add -d to detach; --build after requirements change
+docker compose up                                 # add -d to detach; --build after requirements*.txt change
 docker compose exec backend python manage.py <command>
 docker compose logs -f worker
 ```
 
+- Dependencies: runtime ones in `requirements.txt` (all the production image gets);
+  test/load-test ones in `requirements-dev.txt`, which compose builds with.
+- The Dockerfile's `CMD` is the production server (Daphne on `$PORT`); compose overrides it
+  with `runserver`. Production is Railway (`railway.json`); see the root README's Deploy.
 - `DATABASE_URL` points at the `db` service and `REDIS_URL` at `redis` (channels_redis + Redis
   cache). The SQLite / in-memory / LocMem fallbacks exist only for when those are unset (CI).
 - Celery broker: `CELERY_BROKER_URL`, default `redis://redis:6379/1`. Tasks go in each app's

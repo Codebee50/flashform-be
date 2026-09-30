@@ -18,3 +18,6 @@ BREVO_API_KEY = ""
 FRONTEND_URL = "http://frontend.test"
 SUPPORT_EMAIL = "support@flashform.test"
 EMAIL_BACKEND = "django.core.mail.backends.locmem.EmailBackend"
+
+# Test clients speak plain http; CI runs with DEBUG off, which turns the redirect on.
+SECURE_SSL_REDIRECT = False

@@ -7,7 +7,10 @@
 name: flashform
 
 x-backend: &backend
-  build: .
+  build:
+    context: .
+    args:
+      REQUIREMENTS: requirements-dev.txt
   image: flashform-backend
   volumes:
     - .:/app

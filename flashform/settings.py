@@ -69,6 +69,8 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
+    # Serves collectstatic output (the admin's CSS/JS) when DEBUG is off.
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -291,6 +293,27 @@ USE_TZ = True
 
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
+# collectstatic runs in the Dockerfile. No manifest, so a missing collectstatic (e.g. a
+# DEBUG=False run on the mounted source) can't turn admin pages into 500s.
+STORAGES = {
+    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    "staticfiles": {"BACKEND": "whitenoise.storage.CompressedStaticFilesStorage"},
+}
+
+
+# --- HTTPS (production) -----------------------------------------------------
+# With DEBUG off, the host's proxy (Railway) terminates TLS and sets X-Forwarded-Proto.
+# The API uses bearer tokens, so the cookie flags only matter for /admin. Set
+# SECURE_SSL_REDIRECT=False to run with DEBUG off over plain http locally.
+
+if not DEBUG:
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+    SECURE_SSL_REDIRECT = env_bool("SECURE_SSL_REDIRECT", default=True)
+    # The host's health checks come over plain http from inside its network.
+    SECURE_REDIRECT_EXEMPT = [r"^api/health$"]
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SECURE_HSTS_SECONDS = int(os.environ.get("SECURE_HSTS_SECONDS", "2592000"))  # 30 days
 
 
 # --- Logging ----------------------------------------------------------------
