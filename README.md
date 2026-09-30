@@ -2,9 +2,7 @@
 
 Flashform is a free, open-source classroom response app for live quizzes and polls. A
 teacher starts a question or a quiz in a room. Students join from their phones or laptops
-with the room code and a name. Students do not need an account. Flashform was built
-because an existing tool failed when a whole class joined at once. Reliability is the main
-design goal.
+with the room code and a name. Students do not need an account.
 
 This repository is the backend (Django API and WebSockets) and the main home for the
 project's documentation. The frontend is a separate repository.
