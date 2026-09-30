@@ -7,15 +7,13 @@ with the room code and a name. Students do not need an account.
 This repository is the backend (Django API and WebSockets) and the main home for the
 project's documentation. The frontend is a separate repository.
 
-**Status:** prototype, under active development. It has not been independently
-security-reviewed.
+**Status:** prototype, under active development.
 
 ## Links
 
 - Live app: https://flashform.live
 - Frontend repo: https://github.com/Codebee50/flashform-fe
 - API docs (live): https://flashformlive.up.railway.app/api/docs/
-- Demo teacher login: `demo@flashform.live` / `P@ssword1`
 
 ## At a glance
 

@@ -4,8 +4,7 @@ What Flashform stores about students and teachers, who can see it, and how to de
 
 [← Back to README](../README.md)
 
-This page describes the code in this repository as it is today. Flashform is a prototype
-and has not been independently security-reviewed.
+This page describes the code in this repository as it is today.
 
 ## Summary
 
@@ -213,4 +212,3 @@ Things a reviewer might expect that do not exist yet:
 - **An audit log** of who viewed or exported data.
 - **Encryption of stored data by Flashform itself.** Encryption at rest depends on the
   database host.
-- **An independent security review.**
